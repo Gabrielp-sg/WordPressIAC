@@ -1,0 +1,170 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Template para instalar/configurar o wordpress e subir toda infraestrutura necessaria para a aplicacao
+
+Parameters:
+  DBName:
+    Type: String
+    Default: wordpressdb
+    Description: Nome do banco de dados para o WordPress
+  DBUser:
+    Type: String
+    Default: wordpressuser
+    Description: Nome de usuário do banco de dados para o WordPress
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Description: Senha do banco de dados para o WordPress
+  DBInstanceClass:
+    Type: String
+    Default: db.t2.micro
+    Description: Classe de instância do banco de dados RDS
+  KeyName:
+    Type: String
+    Description: Nome da chave SSH para acesso à instância EC2
+
+Resources:
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [1, !GetAZs '']
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref RouteTable
+
+  SubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref RouteTable
+
+  # Instância do banco RDS - MySQL
+  MyDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName: !Ref DBName
+      AllocatedStorage: 20
+      DBInstanceClass: !Ref DBInstanceClass
+      Engine: mysql
+      MasterUsername: !Ref DBUser
+      MasterUserPassword: !Ref DBPassword
+      VPCSecurityGroups:
+        - !GetAtt MyDBSecurityGroup.GroupId
+      DBSubnetGroupName: !Ref MyDBSubnetGroup
+      MultiAZ: false
+      PubliclyAccessible: true
+
+  # Grupo de segurança do banco
+  MyDBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow MySQL
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/16
+
+  # Grupo de sub-redes do RDS
+  MyDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Subnet Group for RDS Instance"
+      SubnetIds:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+
+  # Instância EC2 para o WordPress
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: "ami-0c02fb55956c7d316"  # Corrigido para Ubuntu
+      InstanceType: t2.micro
+      SubnetId: !Ref PublicSubnet1
+      KeyName: !Ref TCCWordPress
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # Atualizar os pacotes do Ubuntu
+          apt update -y
+          apt upgrade -y
+          # Instalar Apache2 e PHP
+          apt install apache2 php libapache2-mod-php php-mysql -y
+          # Reiniciar o Apache para garantir que tudo está configurado
+          systemctl restart apache2
+          systemctl enable apache2
+          # Instalar o MySQL Client (supondo que o banco de dados esteja em RDS)
+          apt install mysql-client -y
+          # Baixar e configurar o WordPress
+          cd /tmp
+          wget https://wordpress.org/latest.tar.gz
+          tar -xzf latest.tar.gz
+          mv wordpress /var/www/html/wordpress
+          # Configurar as permissões adequadas
+          chown -R www-data:www-data /var/www/html/wordpress
+          chmod -R 755 /var/www/html/wordpress
+          # Configurar o arquivo wp-config.php
+          cd /var/www/html/wordpress
+          cp wp-config-sample.php wp-config.php
+          sed -i "s/database_name_here/${DBName}/" wp-config.php
+          sed -i "s/username_here/${DBUser}/" wp-config.php
+          sed -i "s/password_here/${DBPassword}/" wp-config.php
+          sed -i "s/localhost/${!GetAtt MyDBInstance.Endpoint.Address}/" wp-config.php
+          # Adicionar chaves únicas e sal do WordPress
+          curl -s https://api.wordpress.org/secret-key/1.1/salt/ -o salt.txt
+          sed -i '/AUTH_KEY/r salt.txt' wp-config.php
+          sed -i '/NONCE_KEY/d' wp.config.php
+          rm salt.txt
+          # Habilitar mod_rewrite para permalinks do WordPress
+          a2enmod rewrite
+          systemctl restart apache2
+
+Outputs:
+  WebsiteURL:
+    Description: URL do WordPress
+    Value: !Sub "http://${!GetAtt MyEC2Instance.PublicIp}/"
+  DBHost:
+    Description: Endpoint da instância RDS
+    Value: !GetAtt MyDBInstance.Endpoint.Address

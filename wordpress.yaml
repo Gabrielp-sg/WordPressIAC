@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: Template para instalar/configurar o wordpress e subir toda infraestrutura necessaria para a aplicacao
-
+#Parametros que serão declarados na CLI para o Banco RDS
 Parameters:
   DBName:
     Type: String
@@ -21,7 +21,7 @@ Parameters:
   KeyName:
     Type: String
     Description: Nome da chave SSH para acesso à instância EC2
-
+#Subindo VPC
 Resources:
   MyVPC:
     Type: AWS::EC2::VPC
@@ -120,14 +120,14 @@ Resources:
   MyEC2Instance:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: "ami-0c02fb55956c7d316"  # Corrigido para Ubuntu
+      ImageId: "ami-0c02fb55956c7d316"  # AMI para Ubuntu
       InstanceType: t2.micro
       SubnetId: !Ref PublicSubnet1
       KeyName: !Ref TCCWordPress
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
-          # Atualizar os pacotes do Ubuntu
+          # Atualizar os pacotes sem requisição 
           apt update -y
           apt upgrade -y
           # Instalar Apache2 e PHP

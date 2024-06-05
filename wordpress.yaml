@@ -1,3 +1,5 @@
+# Follow the Script CloudFormation
+
 AWSTemplateFormatVersion: '2010-09-09'
 Description: Template para instalar/configurar o wordpress e subir toda infraestrutura necessaria para a aplicacao
 #Parametros que serão declarados na CLI para o Banco RDS
